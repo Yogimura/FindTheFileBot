@@ -57,5 +57,8 @@ async def on_message(message):
         encouragements = starter_encouragements
         await message.channel.send(list(encouragements))
 
+    await message.channel.send(msg)
+
+
 client.run(os.getenv('TOKEN'))
 
