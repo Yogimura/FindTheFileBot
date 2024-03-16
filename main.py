@@ -28,7 +28,7 @@ starter_encouragements = [
 
 
 def get_quote():
-    response = requests.get("https://zenquotes.io/api/random")
+    response = requests.get("https://zenquotes.io/api/random", timeout=60)
     json_data = json.loads(response.text)
     quote = json_data[0]['q'] + " -" + json_data[0]['a']
     return quote
