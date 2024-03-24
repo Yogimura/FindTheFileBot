@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
-last_research = {}
+
+main_channel = None
 
 
 @bot.event
@@ -21,154 +22,113 @@ async def on_ready():
         print(e)
 
 
-@bot.tree.command()
-@app_commands.describe(extension="File extension")
-@app_commands.describe(limit="Number of files")
-@app_commands.describe(categoryid="Category to be scan")
-async def getbycategoryft(interactor: discord.Interaction, extension: str, limit: int, categoryid: str):
-    await interactor.response.send_message("iniciando proceso")
+# todo cada que se agrege un archivo por cualquiera de estos metodos, este tambien debe agregarse
+#  a su hilo de extension, asi se facilita la busqueda en el largo plazo, ademas de agrega el full
+#  search y el log search, tambien el search al hilo.
 
-    await exist_thread(interactor, extension)
-    thread = load_thread(interactor, extension)
-
-    messages = await search_by_category(interactor, extension, limit, categoryid)
-
-    for file in messages:
-        await thread.send(file)
-
-    await interactor.followup.send("Todos los archivos han sido enviados")
+# todo agregar usos de attachment.content_type, preferiblemenbe con un enumerador o lista de extensiones para evitar
+#  el la entrada de texto indiscriminado
 
 
 @bot.tree.command()
-@app_commands.describe(extension="File extension")
-@app_commands.describe(limit="Number of files")
-@app_commands.describe(limit_comprobator="Number of comparison to avoid redundancies on threads")
-@app_commands.describe(categoryid="Category to be scan")
-async def getbycategory(interactor: discord.Interaction, extension: str, limit: int, limit_comprobator: int, categoryid: str):
-
-    await interactor.response.send_message("iniciando proceso")
-
-    await exist_thread(interactor, extension)
-    thread = load_thread(interactor, extension)
-
-    messages = await search_by_category(interactor, extension, limit, categoryid)
-    thread_messages = await search_by_thread(thread, limit_comprobator)
-
-    valid_messages = []
-
-    for x in messages:
-        if x not in thread_messages:
-            valid_messages.append(x)
-
-    for file in valid_messages:
-        await thread.send(file)
-
-    await interactor.followup.send("Todos los archivos han sido enviados")
+async def setmainchannel(interactor: discord.Interaction, channel: discord.TextChannel):
+    global main_channel
+    main_channel = channel
+    await interactor.response.send_message("El canal principal ahora es: " + channel.mention)
 
 
 @bot.tree.command()
-@app_commands.describe(extension="File extension")
-@app_commands.describe(limit="Number of files")
-@app_commands.describe(limit_comprobator="Number of comparison to avoid redundancies on threads")
-async def getbyguildft(interactor: discord.Interaction, extension: str, limit: int, limit_comprobator: int):
+async def getfilebycategory(interactor: discord.Interaction,
+                            file_extension: str,
+                            category: discord.CategoryChannel, order: bool = False, file_name: str = ""):
 
-    await interactor.response.send_message("iniciando proceso")
+    if main_channel is not None:
+        await interactor.response.send_message("Busqueda iniciada")
+        files = await search_by_category(category=category, file_extension=file_extension, order=order)
+        if len(files) == 0:
+            await interactor.followup.send("No se encontraron archivos en este canal")
+            return
+        elif len(file_name) > 0:
+            files = filter_by_name(files=files, file_name=file_name)
 
-    await exist_thread(interactor, extension)
-    thread = load_thread(interactor, extension)
-
-    messages = await search_by_guild(interactor, extension, limit)
-    thread_messages = await search_by_thread(thread, limit_comprobator)
-
-    valid_messages = []
-
-    for x in messages:
-        if x not in thread_messages:
-            valid_messages.append(x)
-
-    for file in valid_messages:
-        await thread.send(file)
-
-    await interactor.followup.send("Todos los archivos han sido enviados")
+        thread = await create_thread(channel=main_channel, thread_name=(category.name + file_extension))
+        await print_files(thread=thread, files=files)
+        await interactor.followup.send("Busqueda terminada")
+    else:
+        await interactor.response.send_message("Aun no se ha designado un canal para mostrar los resultados. Por favor use el comando /setmainchannel channel_name")
 
 
 @bot.tree.command()
-@app_commands.describe(extension="File extension")
-@app_commands.describe(limit="Number of files")
-async def getbyguild(interactor: discord.Interaction, extension: str, limit: int):
+async def getfilebychannel(interactor: discord.Interaction,
+                           file_extension: str, channel: discord.TextChannel, order: bool = False, file_name: str = ""):
 
-    await interactor.response.send_message("iniciando proceso")
+    if main_channel is not None:
+        await interactor.response.send_message("Busqueda iniciada")
 
-    await exist_thread(interactor, extension)
-    thread = load_thread(interactor, extension)
+        files = await search_by_channel(channel=channel, file_extension=file_extension, order=order)
 
-    messages = await search_by_guild(interactor, extension, limit)
+        if len(files) == 0:
+            await interactor.followup.send("No se encontraron archivos en este canal")
+            return
+        elif len(file_name) > 0:
+            files = filter_by_name(files=files, file_name=file_name)
 
-    for file in messages:
-        await thread.send(file)
-
-    await interactor.followup.send("Todos los archivos han sido enviados")
-
-
-async def search_by_category(interactor, extension, limit, categoryID):
-    categories = interactor.guild.categories
-    category = ""
-    for catego in categories:
-        if catego.id == int(categoryID):
-            category = catego.text_channels
-
-    messages = []
-    for channel in category:
-        async for message in channel.history(limit=limit):
-            if "Find the File Bot" not in message.author.name and len(message.attachments) > 0:
-                attachs = message.attachments
-                for file in attachs:
-                    if file.filename.endswith(extension):
-                        messages.append(file.url)
-
-    return messages
+        thread = await create_thread(channel=main_channel, thread_name=(channel.name + file_extension))
+        await print_files(thread=thread, files=files)
+        await interactor.followup.send("Busqueda terminada")
+    else:
+        await interactor.response.send_message("Aun no se ha designado un canal para mostrar los resultados. Por favor use el comando /setmainchannel channel_name")
 
 
-async def search_by_guild(interactor, extension, limit) -> list[str]:
-    channelslist = interactor.guild.text_channels
-    messages = []
-    for channel in channelslist:
-        async for message in channel.history(limit=limit):
-            if "Find the File Bot" not in message.author.name and len(message.attachments) > 0:
-                attachs = message.attachments
-                for file in attachs:
-                    if file.filename.endswith(extension):
-                        messages.append(file.url)
+def filter_by_name(files: list[str], file_name: str) -> list[str]:
+    filter_files = []
+    for file in files:
+        if file_name in file:
+            filter_files.append(file)
 
-    return messages
+    return filter_files
 
 
-async def search_by_thread(thread, limit) -> list[str]:
-    messages = []
-    async for message in thread.history(limit=limit):
-        messages.append(message.content)
+async def search_by_category(category: discord.CategoryChannel, file_extension: str, order: bool = False) -> list[str]:
+    files = []
+    channels = category.text_channels
+    for channel in channels:
+        message_list = await search_by_channel(channel=channel, file_extension=file_extension, order=order)
+        for message in message_list:
+            files.append(message)
 
-    return messages
-
-
-async def exist_thread(interactor, extension):
-    threads = interactor.channel.threads
-    threadsnames = []
-    for th in threads:
-        threadsnames.append(th.name)
-
-    if extension not in threadsnames:
-        await interactor.channel.create_thread(name=extension)
+    return files
 
 
-def load_thread(interactor, extension):
-    threads = interactor.channel.threads
-    thread = 0
-    for th in threads:
-        if th.name in extension:
-            thread = th
+async def search_by_channel(channel: discord.TextChannel, file_extension: str, order: bool = False) -> list[str]:
+    files = []
+    async for message in channel.history(limit=None, oldest_first=order):
+        if len(message.attachments) > 0 and "Find the File Bot" not in message.author.name:
+            for file in message.attachments:
+                if file.filename.endswith(file_extension):
+                    files.append(file.url)
+                print(file.content_type)
 
-    return thread
+    return files
+
+
+async def print_files(thread: discord.Thread, files: list[str]):
+    urls = await get_url_thread(thread=thread)
+    for file in files:
+        if file not in urls:
+            await thread.send(file)
+
+
+async def get_url_thread(thread: discord.Thread) -> list[str]:
+    return [messages.content async for messages in thread.history(limit=None)]
+
+
+async def create_thread(channel: discord.TextChannel, thread_name: str) -> discord.Thread:
+    for thread in channel.threads:
+        if thread.name == thread_name:
+            return thread
+
+    return await channel.create_thread(name=thread_name)
 
 
 bot.run(os.getenv('TOKEN'))
